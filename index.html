@@ -3,24 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>XRPMan DUSTSTORM</title>
+  <title>XRPMan SkyFall</title>
   <style>
     body { background: #111; color: #0f0; font-family: sans-serif; padding: 2rem; }
     textarea, input { width: 100%; padding: 0.5rem; background: #222; color: #0f0; border: 1px solid #0f0; margin-bottom: 1rem; }
     button { padding: 0.5rem 1rem; background: #0f0; color: #000; font-weight: bold; border: none; cursor: pointer; margin-right: 0.5rem; }
     pre { background: #000; padding: 1rem; margin-top: 1rem; border: 1px solid #0f0; max-height: 300px; overflow-y: auto; }
-    .dust-canvas {
+    .log-container { position: relative; margin-bottom: 1rem; }
+    .copy-btn { position: absolute; top: 5px; right: 5px; padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+    .error-log { border-color: #f00 !important; }
+    .error-log pre { color: #ff6666 !important; background: #220000 !important; }
+    .error-title { color: #ff6666; font-weight: bold; margin-bottom: 0.5rem; }
+  
+    body::before {
+      content: "";
       position: fixed;
-      top: 0;
-      left: 0;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: repeating-linear-gradient(0deg, rgba(0,255,0,0.1) 0, rgba(0,255,0,0.1) 1px, transparent 1px, transparent 2px);
+      animation: matrixMove 0.5s linear infinite;
       z-index: -1;
-      width: 100%;
-      height: 100%;
-      background: black;
     }
-    #walletFileInput {
-      display: none;
+    @keyframes matrixMove {
+      0% { background-position-y: 0; }
+      100% { background-position-y: 2px; }
     }
+
   </style>
   <script src="https://unpkg.com/xrpl@2.6.0/build/xrpl-latest-min.js"></script>
 </head>
@@ -73,11 +80,11 @@
 <div id="tutorialModal">
   <div id="tutorialContent">
     <span id="closeTutorial">&times;</span>
-    <h2>DUSTSTORM - How To Use</h2>
+    <h2>SKYFALL - How To Airdrop</h2>
     <p>1. Load your wallet JSON using the button above, or enter your seed phrase manually.</p>
     <p>2. Enter the Issuer Address and Token Code (or leave blank to auto-detect).</p>
-    <p>3. Click â€œFetch Trustlinesâ€ to get all 0-balance trustlines.</p>
-    <p>4. Click â€œDust Walletsâ€ to send micro-tokens and grow holders!</p>
+    <p>3. Enter a minimum token amount filter (optional). Minimum send amount is 1 token per wallet.</p>
+    <p>4. Click â€œSend Airdropâ€ to distribute selected token amount to matching wallets.</p>
     <p>ðŸ’¾ Use â€œDownload CSVâ€ to save the list.</p>
   </div>
 </div>
@@ -92,39 +99,65 @@
   });
 </script>
 
-  <h1>XRPMan DUSTSTORM</h1>
+  <h1>XRPMan SkyFall</h1>
   <input id="issuer" placeholder="Issuer address" value="" />
   <input id="currency" placeholder="Token code (optional)" value="" />
-  <input id="secret" placeholder="Sender Wallet Secret" value="" />
+  <input id="secret" placeholder="Sender Wallet Secret (seed or private key)" value="" />
   <button onclick="loadWalletJSON()">Load Wallet JSON</button>
   <button onclick="fetchTrustlines()">Fetch Trustlines</button>
-  <button onclick="dust()">Dust Wallets</button>
+  <button onclick="airdrop()">Send Tokens (Airdrop)</button>
   <button onclick="downloadCSV()">Download CSV</button>
   <input type="file" id="walletFileInput" accept=".json" style="display: none;" />
-  <pre id="log">Log:
+  
+  <input id="minHold" placeholder="Minimum token balance required (e.g., 0)" />
+  <input id="sendAmount" placeholder="Token amount to send (e.g., 1)" />
+  
+  <div id="counters" style="margin-top: 1rem;">
+    âœ… Success: <span id="successCount">0</span> | 
+    âš ï¸ Skipped: <span id="skipCount">0</span> | 
+    âŒ Failed: <span id="failCount">0</span> | 
+    ðŸ”„ Progress: <span id="progressCount">0</span>/<span id="totalCount">0</span>
+  </div>
+
+  <button onclick="debugBalances()">Debug Balances</button>
+  <button onclick="clearLogs()">Clear All Logs</button>
+
+  <div class="log-container">
+    <div style="color: #0f0; font-weight: bold; margin-bottom: 0.5rem;">ðŸ“‹ Main Log</div>
+    <button class="copy-btn" onclick="copyLog('log')">Copy</button>
+    <pre id="log">Log:
 </pre>
+  </div>
+
+  <div class="log-container error-log">
+    <div class="error-title">ðŸš¨ Error Log</div>
+    <button class="copy-btn" onclick="copyLog('errorLog')">Copy</button>
+    <pre id="errorLog">Error Log:
+</pre>
+  </div>
+
+  <div class="log-container">
+    <div style="color: #0f0; font-weight: bold; margin-bottom: 0.5rem;">ðŸ” Debug Log</div>
+    <button class="copy-btn" onclick="copyLog('debugLog')">Copy</button>
+    <pre id="debugLog">Debug Log:
+</pre>
+  </div>
+  
   <textarea id="wallets" rows="10" placeholder="Trustline Wallets Will Appear Here..."></textarea>
 
   <script>
     let client, wallet;
     const log = document.getElementById("log");
+    const errorLog = document.getElementById("errorLog");
+    const debugLog = document.getElementById("debugLog");
     const csvRows = ["Wallet,Status"];
-    const amount = "0.000001";
-
-    async function connect() {
-      if (!client || !client.isConnected()) {
-        client = new xrpl.Client("wss://s1.ripple.com");
-        await client.connect();
-        log.textContent += "âœ… Connected to XRPL\n";
-      }
-    }
 
     function loadWalletJSON() {
       const walletFileInput = document.getElementById('walletFileInput');
       walletFileInput.onchange = function(event) {
         const file = event.target.files[0];
         if (!file) {
-          log.textContent += "âŒ No wallet file selected\n";
+          errorLog.textContent += "âŒ No wallet file selected\n";
           return;
         }
 
@@ -168,11 +201,19 @@
                 document.getElementById("secret").value = secret;
                 log.textContent += `âœ… Wallet secret loaded successfully\n`;
                 log.textContent += `ðŸ”‘ Secret length: ${secret.length} characters\n`;
+                
+                // Try to create wallet to verify the secret
+                try {
+                  const testWallet = createWalletFromSecret(secret);
+                  log.textContent += `âœ… Wallet validated: ${testWallet.address}\n`;
+                } catch (e) {
+                  errorLog.textContent += `âš ï¸ Warning: Loaded secret might be invalid: ${e.message}\n`;
+                }
               } else {
-                log.textContent += `âŒ Invalid wallet secret: too short (${secret.length} characters)\n`;
+                errorLog.textContent += `âŒ Invalid wallet secret: too short (${secret.length} characters)\n`;
               }
             } else {
-              log.textContent += `âŒ No valid wallet secret found in JSON file\n`;
+              errorLog.textContent += `âŒ No valid wallet secret found in JSON file\n`;
               log.textContent += `ðŸ’¡ Supported formats:\n`;
               log.textContent += `   - "sYourSecretHere"\n`;
               log.textContent += `   - {"secret": "sYourSecretHere"}\n`;
@@ -180,13 +221,13 @@
               log.textContent += `   - {"privateKey": "sYourSecretHere"}\n`;
             }
           } catch (error) {
-            log.textContent += `âŒ Error parsing wallet JSON: ${error.message}\n`;
+            errorLog.textContent += `âŒ Error parsing wallet JSON: ${error.message}\n`;
             log.textContent += `ðŸ’¡ Please check that your file contains valid JSON\n`;
           }
         };
 
         reader.onerror = function() {
-          log.textContent += `âŒ Error reading wallet file\n`;
+          errorLog.textContent += `âŒ Error reading wallet file\n`;
         };
 
         reader.readAsText(file);
@@ -195,224 +236,403 @@
       walletFileInput.click();
     }
 
-    async function fetchTokenCode(issuer) {
+    function clearLogs() {
+      log.textContent = "Log:\n";
+      errorLog.textContent = "Error Log:\n";
+      debugLog.textContent = "Debug Log:\n";
+      document.getElementById("successCount").textContent = "0";
+      document.getElementById("skipCount").textContent = "0";
+      document.getElementById("failCount").textContent = "0";
+      document.getElementById("progressCount").textContent = "0";
+      document.getElementById("totalCount").textContent = "0";
+    }
+
+    // Copy log function
+    function copyLog(logId) {
+      const logElement = document.getElementById(logId);
+      const text = logElement.textContent;
+      
+      navigator.clipboard.writeText(text).then(() => {
+        // Visual feedback
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.background = '#00ff00';
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.background = '#0f0';
+        }, 1000);
+      }).catch(err => {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        // Visual feedback
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.background = '#00ff00';
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.background = '#0f0';
+        }, 1000);
+      });
+    }
+
+    async function connect() {
+      if (!client || !client.isConnected()) {
+        client = new xrpl.Client("wss://s1.ripple.com");
+        await client.connect();
+        log.textContent += "âœ… Connected to XRPL\n";
+      }
+    }
+
+    async function autoDetectTokenCode(issuer) {
+      try {
+        const res = await client.request({
+          command: "account_lines",
+          account: issuer,
+          limit: 1
+        });
+        if (res.result.lines.length > 0) {
+          return res.result.lines[0].currency;
+        }
+      } catch (e) {
+        errorLog.textContent += `âš ï¸ Could not auto-detect token code: ${e.message}\n`;
+      }
+      return "";
+    }
+
+    function createWalletFromSecret(secret) {
+      try {
+        // Try different wallet creation methods
+        if (secret.startsWith('s')) {
+          // Standard seed format
+          return xrpl.Wallet.fromSeed(secret);
+        } else if (secret.length === 64) {
+          // Private key format (hex)
+          return xrpl.Wallet.fromSecret(secret);
+        } else if (secret.length === 66 && secret.startsWith('00')) {
+          // Private key with prefix
+          return xrpl.Wallet.fromSecret(secret.substring(2));
+        } else {
+          // Try as seed first, then as secret
+          try {
+            return xrpl.Wallet.fromSeed(secret);
+          } catch {
+            return xrpl.Wallet.fromSecret(secret);
+          }
+        }
+      } catch (e) {
+        throw new Error(`Invalid wallet secret format: ${e.message}`);
+      }
+    }
+
+    function convertCurrencyCodeToString(currencyCode) {
+      if (currencyCode.length === 40) {
+        // Convert hex currency code to ASCII
+        try {
+          let result = '';
+          for (let i = 0; i < currencyCode.length; i += 2) {
+            const hex = currencyCode.substr(i, 2);
+            if (hex !== '00') {
+              result += String.fromCharCode(parseInt(hex, 16));
+            }
+          }
+          return result || currencyCode;
+        } catch (e) {
+          return currencyCode;
+        }
+      }
+      return currencyCode;
+    }
+
+    async function fetchTrustlines() {
+      await connect();
+      const issuer = document.getElementById("issuer").value.trim();
+      let currency = document.getElementById("currency").value.trim();
+      const minHold = parseFloat(document.getElementById("minHold").value) || 0;
+      const walletList = [];
+
+      if (!currency) {
+        currency = await autoDetectTokenCode(issuer);
+        if (currency) {
+          const readableCurrency = convertCurrencyCodeToString(currency);
+          log.textContent += `ðŸ” Auto-detected token code: ${readableCurrency}\n`;
+          document.getElementById("currency").value = currency;
+        } else {
+          errorLog.textContent += `âŒ Could not auto-detect token code. Please enter it manually.\n`;
+          return;
+        }
+      }
+
       try {
         const res = await client.request({
           command: "account_lines",
           account: issuer,
           limit: 400
         });
-        if (res.result.lines.length > 0) {
-          return res.result.lines[0].currency;
-        }
-      } catch (e) {
-        log.textContent += `âš ï¸ Could not auto-detect token code: ${e.message}\n`;
-      }
-      return "";
-    }
 
-    async function checkIfHolder(address, issuer, currency) {
-      try {
-        const res = await client.request({
-          command: "account_lines",
-          account: address,
-          limit: 400
-        });
-        for (const line of res.result.lines) {
-          if (line.currency.toUpperCase() === currency && line.issuer === issuer && parseFloat(line.balance) > 0) {
-            return true;
+        const lines = res.result.lines;
+        log.textContent += `âœ… Fetched ${lines.length} trustlines from issuer\n`;
+
+        for (const line of lines) {
+          if (line.currency === currency) {
+            const holderBalance = -parseFloat(line.balance); // Reverse issuer perspective
+            
+            if (minHold === 0 || holderBalance >= minHold) {
+              walletList.push(line.account);
+            }
           }
         }
-      } catch (e) {
-        log.textContent += `âš ï¸ Holder check failed for ${address}: ${e.message}\n`;
-      }
-      return false;
-    }
 
-    async function fetchTrustlines() {
-      try {
-        const issuer = document.getElementById("issuer").value.trim();
-        let currency = document.getElementById("currency").value.trim().toUpperCase().replace(/^\$/, '');
-        if (!issuer) return alert("Missing issuer address");
-
-        await connect();
-        if (!currency) {
-          currency = await fetchTokenCode(issuer);
-          document.getElementById("currency").value = currency;
-          log.textContent += `â„¹ï¸ Auto-detected token code: ${currency}\n`;
-        }
-
-        log.textContent += `Fetching trustlines for ${currency}...\n`;
-
-        const seen = new Set();
-        let marker = true;
-        let options = { command: "account_lines", account: issuer, limit: 400 };
-
-        do {
-          if (marker && typeof marker === 'string') options.marker = marker;
-          const res = await client.request(options);
-          for (let line of res.result.lines) {
-            if (line.currency.toUpperCase() === currency && parseFloat(line.balance) === 0) seen.add(line.account);
-          }
-          marker = res.result.marker || false;
-        } while (marker);
-
-        const walletList = [...seen];
-        if (walletList.length === 0) {
-          log.textContent += `âš ï¸ No trustlines found for ${currency} with 0 balance\n`;
+        document.getElementById("wallets").value = walletList.join("\n");
+        
+        const readableCurrency = convertCurrencyCodeToString(currency);
+        if (minHold === 0) {
+          log.textContent += `âœ… Found ${walletList.length} wallets with trustlines for ${readableCurrency}\n`;
         } else {
-          document.getElementById("wallets").value = walletList.join("\n");
-          log.textContent += `âœ… Found ${walletList.length} trustlines with 0 balance\n`;
+          log.textContent += `âœ… Found ${walletList.length} wallets holding â‰¥ ${minHold} ${readableCurrency}\n`;
         }
+
       } catch (e) {
-        log.textContent += `âš ï¸ Error: ${e.message}\n`;
+        errorLog.textContent += `âŒ Error fetching trustlines: ${e.message}\n`;
       }
     }
 
-    async function dust() {
+    async function airdrop() {
       try {
-        const secret = document.getElementById("secret").value.trim();
+        await connect();
         const issuer = document.getElementById("issuer").value.trim();
-        const currency = document.getElementById("currency").value.trim().toUpperCase().replace(/^\$/, '');
-        const wallets = document.getElementById("wallets").value.trim().split("\n").filter(w => w);
-
-        if (!secret || !issuer || !currency || wallets.length === 0) {
-          return alert("Missing fields or no wallets to dust");
+        let currency = document.getElementById("currency").value.trim();
+        const secret = document.getElementById("secret").value.trim();
+        const sendAmount = document.getElementById("sendAmount").value.trim();
+        const wallets = document.getElementById("wallets").value.split("\n").filter(w => w.trim() !== "");
+        
+        if (!issuer || !secret || wallets.length === 0 || !sendAmount) {
+          errorLog.textContent += `âŒ Missing required fields: issuer, secret, send amount, or wallet list\n`;
+          return;
         }
 
-        await connect();
-        wallet = xrpl.Wallet.fromSeed(secret);
-        log.textContent += `Using wallet: ${wallet.classicAddress}\n`;
+        if (!currency) {
+          currency = await autoDetectTokenCode(issuer);
+          if (!currency) {
+            errorLog.textContent += `âŒ Could not auto-detect token code. Please enter it manually.\n`;
+            return;
+          }
+          document.getElementById("currency").value = currency;
+        }
 
-        for (const dest of wallets) {
+        // Create wallet with improved error handling
+        try {
+          wallet = createWalletFromSecret(secret);
+          log.textContent += `ðŸ”‘ Using wallet: ${wallet.address}\n`;
+        } catch (e) {
+          errorLog.textContent += `âŒ Failed to create wallet: ${e.message}\n`;
+          return;
+        }
+
+        const readableCurrency = convertCurrencyCodeToString(currency);
+        
+        let targetWallets = wallets;
+
+        log.textContent += `ðŸ’° Airdrop Mode: Sending ${sendAmount} ${readableCurrency} to ${targetWallets.length} wallets\n`;
+        document.getElementById("totalCount").textContent = targetWallets.length;
+
+        let successCount = 0;
+        let skipCount = 0;
+        let failCount = 0;
+        let processed = 0;
+
+        for (const destinationAddress of targetWallets) {
           try {
-            const tx = {
+            processed++;
+            document.getElementById("progressCount").textContent = processed;
+
+            // Create the payment transaction - use the original hex currency code
+            const payment = {
               TransactionType: "Payment",
-              Account: wallet.classicAddress,
-              Destination: dest,
+              Account: wallet.address,
+              Destination: destinationAddress,
               Amount: {
-                currency,
-                issuer,
-                value: amount
+                currency: currency, // Use the original hex format, not uppercase
+                value: sendAmount,
+                issuer: issuer
               }
             };
-            const prepared = await client.autofill(tx);
-            const signed = wallet.sign(prepared);
-            const result = await client.submitAndWait(signed.tx_blob);
-            const success = result.result.meta.TransactionResult;
 
-            if (success === "tesSUCCESS") {
-              log.textContent += `âœ… Sent ${amount} ${currency} to ${dest}\n`;
-              csvRows.push(`${dest},Success`);
-              const becameHolder = await checkIfHolder(dest, issuer, currency);
-              if (becameHolder) {
-                log.textContent += `ðŸŽ‰ ${dest} is now a holder\n`;
+            // Use a try-catch specifically for the transaction
+            try {
+              const prepared = await client.autofill(payment);
+              const signed = wallet.sign(prepared);
+              const result = await client.submitAndWait(signed.tx_blob);
+
+              if (result.result.meta.TransactionResult === "tesSUCCESS") {
+                csvRows.push(`${destinationAddress},Success`);
+                successCount++;
               } else {
-                log.textContent += `âš ï¸ ${dest} still shows 0 balance\n`;
+                csvRows.push(`${destinationAddress},Failed:${result.result.meta.TransactionResult}`);
+                errorLog.textContent += `âŒ TX Failed ${destinationAddress}: ${result.result.meta.TransactionResult}\n`;
+                failCount++;
               }
-            } else if (success === "tecPATH_DRY") {
-              log.textContent += `âŒ Skipped ${dest}: No trustline or path (tecPATH_DRY)\n`;
-              csvRows.push(`${dest},Skipped:PATH_DRY`);
-            } else if (success === "tecDST_TAG_NEEDED") {
-              log.textContent += `âŒ Skipped ${dest}: Destination tag required (tecDST_TAG_NEEDED)\n`;
-              csvRows.push(`${dest},Skipped:DST_TAG_NEEDED`);
-            } else {
-              log.textContent += `âŒ Failed for ${dest}: ${success}\n`;
-              csvRows.push(`${dest},Fail:${success}`);
+            } catch (txError) {
+              errorLog.textContent += `âŒ Transaction error for ${destinationAddress}: ${txError.message}\n`;
+              
+              // Try alternative transaction format
+              try {
+                const altPayment = {
+                  TransactionType: "Payment",
+                  Account: wallet.address,
+                  Destination: destinationAddress,
+                  Amount: {
+                    currency: currency.toUpperCase(),
+                    value: String(sendAmount),
+                    issuer: issuer
+                  }
+                };
+                
+                const altPrepared = await client.autofill(altPayment);
+                const altSigned = wallet.sign(altPrepared);
+                const altResult = await client.submitAndWait(altSigned.tx_blob);
+
+                if (altResult.result.meta.TransactionResult === "tesSUCCESS") {
+                  csvRows.push(`${destinationAddress},Success`);
+                  successCount++;
+                } else {
+                  csvRows.push(`${destinationAddress},RetryFailed:${altResult.result.meta.TransactionResult}`);
+                  errorLog.textContent += `âŒ Retry failed ${destinationAddress}: ${altResult.result.meta.TransactionResult}\n`;
+                  failCount++;
+                }
+              } catch (retryError) {
+                csvRows.push(`${destinationAddress},TxError:${txError.message}`);
+                errorLog.textContent += `âŒ Retry also failed ${destinationAddress}: ${retryError.message}\n`;
+                failCount++;
+              }
             }
+
+            // Update counters
+            document.getElementById("successCount").textContent = successCount;
+            document.getElementById("skipCount").textContent = skipCount;
+            document.getElementById("failCount").textContent = failCount;
+
+            // Log progress every 10 transactions
+            if (processed % 10 === 0) {
+              log.textContent += `ðŸ“Š ${processed}/${targetWallets.length} - Success: ${successCount}, Failed: ${failCount}\n`;
+            }
+
+            // Reduced delay for faster processing
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
           } catch (e) {
-            log.textContent += `âš ï¸ Error for ${dest}: ${e.message}\n`;
-            csvRows.push(`${dest},Error:${e.message}`);
+            csvRows.push(`${destinationAddress},Error:${e.message}`);
+            errorLog.textContent += `âŒ Error processing ${destinationAddress}: ${e.message}\n`;
+            failCount++;
+            document.getElementById("failCount").textContent = failCount;
           }
         }
 
-        await client.disconnect();
-        log.textContent += `Done.\n`;
+        log.textContent += `\nâœ… Airdrop complete! Success: ${successCount}, Skipped: ${skipCount}, Failed: ${failCount}\n`;
+
       } catch (e) {
-        log.textContent += `âš ï¸ Error: ${e.message}\n`;
+        errorLog.textContent += `âŒ Operation failed: ${e.message}\n`;
       }
     }
 
     function downloadCSV() {
-      const blob = new Blob([csvRows.join("\n")], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "dust_results.csv";
-      a.click();
-      URL.revokeObjectURL(url);
+      const csvContent = csvRows.join("\n");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", "airdrop_results.csv");
+        link.style.visibility = "hidden";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    }
+
+    async function debugBalances() {
+      await connect();
+      const issuer = document.getElementById("issuer").value.trim();
+      let currency = document.getElementById("currency").value.trim();
+      const wallets = document.getElementById("wallets").value.split("\n").filter(w => w.trim() !== "");
+
+      if (!currency) {
+        currency = await autoDetectTokenCode(issuer);
+        if (!currency) {
+          errorLog.textContent += `âŒ Could not auto-detect token code for debug\n`;
+          return;
+        }
+        document.getElementById("currency").value = currency;
+      }
+
+      debugLog.textContent = "Debug Log:\n";
+      const readableCurrency = convertCurrencyCodeToString(currency);
+
+      for (const address of wallets) {
+        try {
+          const res = await client.request({
+            command: "account_lines",
+            account: address
+          });
+
+          const line = res.result.lines.find(l => l.currency === currency && l.account === issuer);
+          if (line) {
+            debugLog.textContent += `${address}: ${line.balance} ${readableCurrency}\n`;
+          } else {
+            debugLog.textContent += `${address}: No trustline for ${readableCurrency}\n`;
+          }
+        } catch (e) {
+          debugLog.textContent += `Error checking ${address}: ${e.message}\n`;
+          errorLog.textContent += `âŒ Debug error for ${address}: ${e.message}\n`;
+        }
+      }
     }
   </script>
 
-<canvas id="dustCanvas" class="dust-canvas"></canvas>
+
+<canvas id="matrixCanvas" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:-1;"></canvas>
 <script>
-const canvas = document.getElementById('dustCanvas');
-const ctx = canvas.getContext('2d');
+  const canvas = document.getElementById('matrixCanvas');
+  const ctx = canvas.getContext('2d');
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 
-let particles = [];
-const numParticles = 100;
-const particleSize = 2;
-const particleSpeed = 0.5;
-const particleColor = 'rgba(0, 255, 0, 0.8)';
-const glowColor = 'rgba(0, 255, 0, 0.5)';
+  const matrix = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%";
+  const font_size = 14;
+  const columns = canvas.width / font_size;
+  const drops = Array(Math.floor(columns)).fill(1);
 
-function Particle() {
-    this.x = Math.random() * canvas.width;
-    this.y = Math.random() * canvas.height;
-    this.size = Math.random() * particleSize + 1;
-    this.speedX = (Math.random() - 0.5) * particleSpeed;
-    this.speedY = (Math.random() - 0.5) * particleSpeed;
-}
-
-Particle.prototype.update = function() {
-    this.x += this.speedX;
-    this.y += this.speedY;
-
-    if (this.x > canvas.width) this.x = 0;
-    if (this.x < 0) this.x = canvas.width;
-    if (this.y > canvas.height) this.y = 0;
-    if (this.y < 0) this.y = canvas.height;
-};
-
-Particle.prototype.draw = function() {
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-    ctx.fillStyle = particleColor;
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = glowColor;
-    ctx.fill();
-};
-
-function initParticles() {
-    for (let i = 0; i < numParticles; i++) {
-        particles.push(new Particle());
-    }
-}
-
-function animateParticles() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+  function drawMatrix() {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    for (let i = 0; i < particles.length; i++) {
-        particles[i].update();
-        particles[i].draw();
+    ctx.fillStyle = "#0F0";
+    ctx.font = font_size + "px monospace";
+
+    for (let i = 0; i < drops.length; i++) {
+      const text = matrix[Math.floor(Math.random() * matrix.length)];
+      ctx.fillText(text, i * font_size, drops[i] * font_size);
+
+      if (drops[i] * font_size > canvas.height && Math.random() > 0.975) {
+        drops[i] = 0;
+      }
+      drops[i]++;
     }
-    requestAnimationFrame(animateParticles);
-}
+  }
 
-initParticles();
-animateParticles();
-
-window.addEventListener('resize', () => {
+  setInterval(drawMatrix, 33);
+  window.addEventListener("resize", () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    particles = [];
-    initParticles();
-});
+  });
 </script>
 
 </body>
