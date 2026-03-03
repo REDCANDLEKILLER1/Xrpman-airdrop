@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XRPMan DUSTSTORM</title>
+  <style>
+    body { background: #111; color: #0f0; font-family: sans-serif; padding: 2rem; }
+    textarea, input { width: 100%; padding: 0.5rem; background: #222; color: #0f0; border: 1px solid #0f0; margin-bottom: 1rem; }
+    button { padding: 0.5rem 1rem; background: #0f0; color: #000; font-weight: bold; border: none; cursor: pointer; margin-right: 0.5rem; }
+    pre { background: #000; padding: 1rem; margin-top: 1rem; border: 1px solid #0f0; max-height: 300px; overflow-y: auto; }
+    .dust-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: -1;
+      width: 100%;
+      height: 100%;
+      background: black;
+    }
+    #walletFileInput {
+      display: none;
+    }
+  </style>
+  <script src="https://unpkg.com/xrpl@2.6.0/build/xrpl-latest-min.js"></script>
+</head>
+<body>
+<style>
+  #tutorialBtn {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 9999;
+    background: #00ff99;
+    color: black;
+    border: none;
+    padding: 10px 14px;
+    font-weight: bold;
+    font-size: 18px;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  #tutorialModal {
+    display: none;
+    position: fixed;
+    z-index: 9998;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.9);
+  }
+  #tutorialContent {
+    background-color: #111;
+    margin: 10% auto;
+    padding: 20px;
+    border: 1px solid #00ff99;
+    width: 90%;
+    max-width: 600px;
+    color: #00ff99;
+    font-family: monospace;
+  }
+  #closeTutorial {
+    float: right;
+    font-size: 24px;
+    color: #00ff99;
+    cursor: pointer;
+  }
+</style>
+
+<button id="tutorialBtn">?</button>
+<div id="tutorialModal">
+  <div id="tutorialContent">
+    <span id="closeTutorial">&times;</span>
+    <h2>DUSTSTORM - How To Use</h2>
+    <p>1. Load your wallet JSON using the button above, or enter your seed phrase manually.</p>
+    <p>2. Enter the Issuer Address and Token Code (or leave blank to auto-detect).</p>
+    <p>3. Click â€œFetch Trustlinesâ€ to get all 0-balance trustlines.</p>
+    <p>4. Click â€œDust Walletsâ€ to send micro-tokens and grow holders!</p>
+    <p>ðŸ’¾ Use â€œDownload CSVâ€ to save the list.</p>
+  </div>
+</div>
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    document.getElementById("tutorialBtn").onclick = () => {
+      document.getElementById("tutorialModal").style.display = "block";
+    };
+    document.getElementById("closeTutorial").onclick = () => {
+      document.getElementById("tutorialModal").style.display = "none";
+    };
+  });
+</script>
+
+  <h1>XRPMan DUSTSTORM</h1>
+  <input id="issuer" placeholder="Issuer address" value="" />
+  <input id="currency" placeholder="Token code (optional)" value="" />
+  <input id="secret" placeholder="Sender Wallet Secret" value="" />
+  <button onclick="loadWalletJSON()">Load Wallet JSON</button>
+  <button onclick="fetchTrustlines()">Fetch Trustlines</button>
+  <button onclick="dust()">Dust Wallets</button>
+  <button onclick="downloadCSV()">Download CSV</button>
+  <input type="file" id="walletFileInput" accept=".json" style="display: none;" />
+  <pre id="log">Log:
+</pre>
+  <textarea id="wallets" rows="10" placeholder="Trustline Wallets Will Appear Here..."></textarea>
+
+  <script>
+    let client, wallet;
+    const log = document.getElementById("log");
+    const csvRows = ["Wallet,Status"];
+    const amount = "0.000001";
+
+    async function connect() {
+      if (!client || !client.isConnected()) {
+        client = new xrpl.Client("wss://s1.ripple.com");
+        await client.connect();
+        log.textContent += "âœ… Connected to XRPL\n";
+      }
+    }
+
+    function loadWalletJSON() {
+      const walletFileInput = document.getElementById('walletFileInput');
+      walletFileInput.onchange = function(event) {
+        const file = event.target.files[0];
+        if (!file) {
+          log.textContent += "âŒ No wallet file selected\n";
+          return;
+        }
+
+        log.textContent += `ðŸ“ Loading wallet file: ${file.name}\n`;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          try {
+            const content = e.target.result;
+            const jsonData = JSON.parse(content);
+            log.textContent += "âœ… Wallet JSON parsed successfully\n";
+            
+            let secret = null;
+
+            // Handle different wallet JSON structures
+            if (typeof jsonData === 'string') {
+              // Direct secret string
+              secret = jsonData;
+              log.textContent += "ðŸ“ Processing as direct secret string\n";
+            } else if (typeof jsonData === 'object') {
+              // Try common property names for wallet secrets
+              secret = jsonData.secret || jsonData.seed || jsonData.privateKey || 
+                      jsonData.private_key || jsonData.mnemonic || jsonData.wallet_secret ||
+                      jsonData.walletSecret || jsonData.key;
+              
+              if (secret) {
+                log.textContent += "ðŸ“ Found wallet secret in JSON object\n";
+              } else {
+                // If it's an object with multiple wallets, take the first one
+                const values = Object.values(jsonData);
+                if (values.length > 0 && typeof values[0] === 'string') {
+                  secret = values[0];
+                  log.textContent += "ðŸ“ Using first value as wallet secret\n";
+                }
+              }
+            }
+
+            if (secret && typeof secret === 'string' && secret.length > 0) {
+              // Validate that it looks like a valid secret (basic check)
+              if (secret.length >= 25) {
+                document.getElementById("secret").value = secret;
+                log.textContent += `âœ… Wallet secret loaded successfully\n`;
+                log.textContent += `ðŸ”‘ Secret length: ${secret.length} characters\n`;
+              } else {
+                log.textContent += `âŒ Invalid wallet secret: too short (${secret.length} characters)\n`;
+              }
+            } else {
+              log.textContent += `âŒ No valid wallet secret found in JSON file\n`;
+              log.textContent += `ðŸ’¡ Supported formats:\n`;
+              log.textContent += `   - "sYourSecretHere"\n`;
+              log.textContent += `   - {"secret": "sYourSecretHere"}\n`;
+              log.textContent += `   - {"seed": "sYourSecretHere"}\n`;
+              log.textContent += `   - {"privateKey": "sYourSecretHere"}\n`;
+            }
+          } catch (error) {
+            log.textContent += `âŒ Error parsing wallet JSON: ${error.message}\n`;
+            log.textContent += `ðŸ’¡ Please check that your file contains valid JSON\n`;
+          }
+        };
+
+        reader.onerror = function() {
+          log.textContent += `âŒ Error reading wallet file\n`;
+        };
+
+        reader.readAsText(file);
+      };
+      
+      walletFileInput.click();
+    }
+
+    async function fetchTokenCode(issuer) {
+      try {
+        const res = await client.request({
+          command: "account_lines",
+          account: issuer,
+          limit: 400
+        });
+        if (res.result.lines.length > 0) {
+          return res.result.lines[0].currency;
+        }
+      } catch (e) {
+        log.textContent += `âš ï¸ Could not auto-detect token code: ${e.message}\n`;
+      }
+      return "";
+    }
+
+    async function checkIfHolder(address, issuer, currency) {
+      try {
+        const res = await client.request({
+          command: "account_lines",
+          account: address,
+          limit: 400
+        });
+        for (const line of res.result.lines) {
+          if (line.currency.toUpperCase() === currency && line.issuer === issuer && parseFloat(line.balance) > 0) {
+            return true;
+          }
+        }
+      } catch (e) {
+        log.textContent += `âš ï¸ Holder check failed for ${address}: ${e.message}\n`;
+      }
+      return false;
+    }
+
+    async function fetchTrustlines() {
+      try {
+        const issuer = document.getElementById("issuer").value.trim();
+        let currency = document.getElementById("currency").value.trim().toUpperCase().replace(/^\$/, '');
+        if (!issuer) return alert("Missing issuer address");
+
+        await connect();
+        if (!currency) {
+          currency = await fetchTokenCode(issuer);
+          document.getElementById("currency").value = currency;
+          log.textContent += `â„¹ï¸ Auto-detected token code: ${currency}\n`;
+        }
+
+        log.textContent += `Fetching trustlines for ${currency}...\n`;
+
+        const seen = new Set();
+        let marker = true;
+        let options = { command: "account_lines", account: issuer, limit: 400 };
+
+        do {
+          if (marker && typeof marker === 'string') options.marker = marker;
+          const res = await client.request(options);
+          for (let line of res.result.lines) {
+            if (line.currency.toUpperCase() === currency && parseFloat(line.balance) === 0) seen.add(line.account);
+          }
+          marker = res.result.marker || false;
+        } while (marker);
+
+        const walletList = [...seen];
+        if (walletList.length === 0) {
+          log.textContent += `âš ï¸ No trustlines found for ${currency} with 0 balance\n`;
+        } else {
+          document.getElementById("wallets").value = walletList.join("\n");
+          log.textContent += `âœ… Found ${walletList.length} trustlines with 0 balance\n`;
+        }
+      } catch (e) {
+        log.textContent += `âš ï¸ Error: ${e.message}\n`;
+      }
+    }
+
+    async function dust() {
+      try {
+        const secret = document.getElementById("secret").value.trim();
+        const issuer = document.getElementById("issuer").value.trim();
+        const currency = document.getElementById("currency").value.trim().toUpperCase().replace(/^\$/, '');
+        const wallets = document.getElementById("wallets").value.trim().split("\n").filter(w => w);
+
+        if (!secret || !issuer || !currency || wallets.length === 0) {
+          return alert("Missing fields or no wallets to dust");
+        }
+
+        await connect();
+        wallet = xrpl.Wallet.fromSeed(secret);
+        log.textContent += `Using wallet: ${wallet.classicAddress}\n`;
+
+        for (const dest of wallets) {
+          try {
+            const tx = {
+              TransactionType: "Payment",
+              Account: wallet.classicAddress,
+              Destination: dest,
+              Amount: {
+                currency,
+                issuer,
+                value: amount
+              }
+            };
+            const prepared = await client.autofill(tx);
+            const signed = wallet.sign(prepared);
+            const result = await client.submitAndWait(signed.tx_blob);
+            const success = result.result.meta.TransactionResult;
+
+            if (success === "tesSUCCESS") {
+              log.textContent += `âœ… Sent ${amount} ${currency} to ${dest}\n`;
+              csvRows.push(`${dest},Success`);
+              const becameHolder = await checkIfHolder(dest, issuer, currency);
+              if (becameHolder) {
+                log.textContent += `ðŸŽ‰ ${dest} is now a holder\n`;
+              } else {
+                log.textContent += `âš ï¸ ${dest} still shows 0 balance\n`;
+              }
+            } else if (success === "tecPATH_DRY") {
+              log.textContent += `âŒ Skipped ${dest}: No trustline or path (tecPATH_DRY)\n`;
+              csvRows.push(`${dest},Skipped:PATH_DRY`);
+            } else if (success === "tecDST_TAG_NEEDED") {
+              log.textContent += `âŒ Skipped ${dest}: Destination tag required (tecDST_TAG_NEEDED)\n`;
+              csvRows.push(`${dest},Skipped:DST_TAG_NEEDED`);
+            } else {
+              log.textContent += `âŒ Failed for ${dest}: ${success}\n`;
+              csvRows.push(`${dest},Fail:${success}`);
+            }
+          } catch (e) {
+            log.textContent += `âš ï¸ Error for ${dest}: ${e.message}\n`;
+            csvRows.push(`${dest},Error:${e.message}`);
+          }
+        }
+
+        await client.disconnect();
+        log.textContent += `Done.\n`;
+      } catch (e) {
+        log.textContent += `âš ï¸ Error: ${e.message}\n`;
+      }
+    }
+
+    function downloadCSV() {
+      const blob = new Blob([csvRows.join("\n")], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "dust_results.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+
+<canvas id="dustCanvas" class="dust-canvas"></canvas>
+<script>
+const canvas = document.getElementById('dustCanvas');
+const ctx = canvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let particles = [];
+const numParticles = 100;
+const particleSize = 2;
+const particleSpeed = 0.5;
+const particleColor = 'rgba(0, 255, 0, 0.8)';
+const glowColor = 'rgba(0, 255, 0, 0.5)';
+
+function Particle() {
+    this.x = Math.random() * canvas.width;
+    this.y = Math.random() * canvas.height;
+    this.size = Math.random() * particleSize + 1;
+    this.speedX = (Math.random() - 0.5) * particleSpeed;
+    this.speedY = (Math.random() - 0.5) * particleSpeed;
+}
+
+Particle.prototype.update = function() {
+    this.x += this.speedX;
+    this.y += this.speedY;
+
+    if (this.x > canvas.width) this.x = 0;
+    if (this.x < 0) this.x = canvas.width;
+    if (this.y > canvas.height) this.y = 0;
+    if (this.y < 0) this.y = canvas.height;
+};
+
+Particle.prototype.draw = function() {
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fillStyle = particleColor;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = glowColor;
+    ctx.fill();
+};
+
+function initParticles() {
+    for (let i = 0; i < numParticles; i++) {
+        particles.push(new Particle());
+    }
+}
+
+function animateParticles() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (let i = 0; i < particles.length; i++) {
+        particles[i].update();
+        particles[i].draw();
+    }
+    requestAnimationFrame(animateParticles);
+}
+
+initParticles();
+animateParticles();
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    particles = [];
+    initParticles();
+});
+</script>
+
+</body>
+</html>
