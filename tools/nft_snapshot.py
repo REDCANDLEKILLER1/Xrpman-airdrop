@@ -12,17 +12,18 @@ R9 = "r9nepSD5tvQUCA4qQAJJDAoBB3j1gf4ibL"
 RDG = "rDg6Q7mTBsVo35cNf6vUSx8uEsDD8Hw7B2"
 VILLAIN_ISSUER = "rwnWEMHD1CW7eZdWcZb1ssT4pPkZaP3qzy"
 VILLAIN_ANCHOR = "000A1F40639335DD467D42C5FE4413986565CDAA061F874908CF040605ACCE6C"
+SPIFFY_ISSUER = "rpGdCA9tSVuDvJSKHgQnBrqLahUrBpcyH2"
 
 collections = [
     {"name":"XRPMan Multiverse","issuer":R9,"taxon":0},
     {"name":"XRPMan: The OG Chronicles","issuer":R9,"taxon":1},
     {"name":"XRPMan: Born in the Swamp","issuer":R9,"taxon":21},
     {"name":"XRPL After Dark","issuer":R9,"taxon":589},
+    {"name":"Three Legends — Spiffy Edition","issuer":SPIFFY_ISSUER,"taxon":777},
 ]
 
 market_pages = {
     "Three Legends — Boo Edition":"https://ladycafe.io/collection/three-legends-boo-044d875b",
-    "Three Legends — Spiffy Edition":"https://imcollectibles.io/collections/3-legends-redcandlekiller-mrzamn-spiffy-edition-777/",
 }
 
 def get_text(url, timeout=30):
@@ -83,14 +84,11 @@ def main():
     for c in collections:
         nfts = fetch_group(c["issuer"], c["taxon"])
         owners = Counter(n.get("Owner") for n in nfts if n.get("Owner"))
-        summaries.append({
-            **c,
-            "nfts":len(nfts),
-            "unique_owners":len(owners),
-        })
+        summaries.append({**c,"nfts":len(nfts),"unique_owners":len(owners)})
         for n in nfts:
             owner = n.get("Owner")
-            if not owner: continue
+            if not owner:
+                continue
             all_rows.append({
                 "owner":owner,
                 "collection":c["name"],
