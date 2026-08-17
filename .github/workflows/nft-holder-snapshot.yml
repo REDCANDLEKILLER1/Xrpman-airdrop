@@ -20,6 +20,8 @@ jobs:
           python-version: '3.12'
       - name: Query public XRPL NFT data
         run: python tools/nft_snapshot.py
+      - name: Cross-check XRPMan trustlines
+        run: python tools/trustline_intersection.py
       - name: Resolve Three Legends diagnostics
         run: python tools/resolve_three_legends.py
       - name: Upload snapshot
