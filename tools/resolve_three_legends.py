@@ -1,74 +1,39 @@
 #!/usr/bin/env python3
 import re
 from urllib.request import Request, urlopen
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 
 HEADERS={"User-Agent":"Mozilla/5.0 SkyFall-NFT-Resolver/1.0","Accept":"application/json,text/html,*/*"}
-TERMS=("three legends","3 legends","spiffy","boo edition","redcandlekiller","mr zamn","mrzamn","three-legends-boo-044d875b")
-ISSUERS=["rDg6Q7mTBsVo35cNf6vUSx8uEsDD8Hw7B2","r9nepSD5tvQUCA4qQAJJDAoBB3j1gf4ibL"]
-MARKETS={
-"boo":"https://ladycafe.io/collection/three-legends-boo-044d875b",
-"spiffy":"https://imcollectibles.io/collections/3-legends-redcandlekiller-mrzamn-spiffy-edition-777/",
-}
+BASE="https://ladycafe.io"
+SLUG="three-legends-boo-044d875b"
 
 def text(url, timeout=25):
     req=Request(url,headers=HEADERS)
     with urlopen(req,timeout=timeout) as r:
         return r.read().decode("utf-8","replace")
 
-def dump_hits(label, raw, max_hits=20):
-    low=raw.lower(); hits=[]
-    for term in TERMS:
-        pos=0
-        while True:
-            i=low.find(term,pos)
+def show(label,url):
+    try:
+        raw=text(url)
+        print("FETCH",label,url,"bytes",len(raw),"body",raw[:30000].replace("\n"," "))
+        return raw
+    except Exception as e:
+        print("ERR",label,url,repr(e)); return ""
+
+for q in ["three legends","boo","redcandlekiller","mr zamn"]:
+    show("SEARCH",f"{BASE}/api/search?q={quote(q)}")
+for u in [f"{BASE}/api/collections/published",f"{BASE}/api/collections/paginated?page=1&limit=100",f"{BASE}/api/collections",f"{BASE}/api/nfts/paginated?page=1&limit=100"]:
+    show("API",u)
+chunk=show("DETAIL_JS",f"{BASE}/assets/collection-detail--E0sPwKc.js")
+if chunk:
+    for m in sorted(set(re.findall(r'["\'`]([^"\'`]*?/api/[^"\'`]+)["\'`]',chunk))): print("DETAIL_API_REF",m[:1000])
+    for needle in ["/api/collections/","queryKey","collectionId","slug"]:
+        start=0
+        for _ in range(12):
+            i=chunk.find(needle,start)
             if i<0: break
-            hits.append(raw[max(0,i-500):min(len(raw),i+1100)].replace("\n"," "))
-            pos=i+len(term)
-            if len(hits)>=max_hits: break
-        if len(hits)>=max_hits: break
-    print(f"HITS {label} count={len(hits)}")
-    for h in hits: print("CTX",h[:1600])
-
-for issuer in ISSUERS:
-    url=f"https://api.xrpldata.com/api/v1/xls20-nfts/issuer/{issuer}"
-    try:
-        raw=text(url)
-        print("FETCH",url,"bytes",len(raw),"head",raw[:250].replace("\n"," "))
-        dump_hits("issuer:"+issuer, raw)
-    except Exception as e: print("ERR",url,repr(e))
-
-for label,url in MARKETS.items():
-    try:
-        raw=text(url)
-        print("MARKET",label,"bytes",len(raw),"url",url)
-        dump_hits("market:"+label,raw)
-        scripts=[urljoin(url,s) for s in re.findall(r'<script[^>]+src=["\']([^"\']+)',raw,re.I)]
-        print("SCRIPTS",label,len(scripts))
-        for s in scripts: print("SCRIPT",label,s)
-        if label=="boo":
-            for s in scripts:
-                if s.startswith("data:") or "googletag" in s or "google" in s: continue
-                try:
-                    js=text(s)
-                    print("JS",s,"bytes",len(js))
-                    low=js.lower()
-                    if any(k in low for k in ("three-legends-boo","supabase","collection","xrpl","nft")):
-                        dump_hits("boo-js:"+s,js,30)
-                        for pat in [r'https?://[^"\'`\\ ]+', r'["\']([^"\']*(?:api|supabase|collection|nft|xrpl)[^"\']*)["\']']:
-                            vals=set(re.findall(pat,js,re.I))
-                            for v in sorted(vals):
-                                if isinstance(v,tuple): v=v[0]
-                                if len(v)<700 and any(k in v.lower() for k in ("api","supabase","collection","nft","xrpl")):
-                                    print("JSREF",v[:700])
-                except Exception as e: print("JSERR",s,repr(e))
-    except Exception as e: print("ERR market",label,repr(e))
-
-for q in ["three legends","spiffy","boo","redcandlekiller","mrzamn"]:
-    for param in ["search","q","name"]:
-        url=f"https://api.xrpl.to/v1/nft/collections?{param}={quote(q)}&limit=100&page=1"
-        try:
-            raw=text(url)
-            if any(t in raw.lower() for t in ("spiffy","three legends","redcandlekiller","boo edition","mrzamn")):
-                print("CATALOG_MATCH",url,raw[:12000])
-        except Exception: pass
+            print("DETAIL_CTX",chunk[max(0,i-700):i+1400].replace("\n"," "))
+            start=i+len(needle)
+for ident in [SLUG,"044d875b"]:
+    for path in [f"/api/collections/{ident}",f"/api/collections/slug/{ident}",f"/api/collections/{ident}/nfts",f"/api/nfts?collectionId={quote(ident)}"]:
+        show("DETAIL_TRY",BASE+path)
